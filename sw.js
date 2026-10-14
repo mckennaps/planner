@@ -1,10 +1,11 @@
 // Lets the app open without a connection. Always tries the network first so updates
 // you push to GitHub show up right away; falls back to the saved copy when offline.
-const CACHE = 'planner-v1';
+const CACHE = 'planner-v2';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/config.js', 'js/util.js', 'js/ui.js', 'js/google.js', 'js/local.js',
   'js/data.js', 'js/events.js', 'js/tasks.js', 'js/recurrence.js',
+  'js/notify.js', 'js/timer.js', 'js/habits.js', 'js/today.js',
   'icons/icon-192.png', 'icons/apple-touch-icon.png',
 ];
 

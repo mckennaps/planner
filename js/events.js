@@ -230,7 +230,7 @@ export function openEventEditor(app, opts) {
   function paintSwatches() {
     const c = app.calendar(catSel.value);
     swatches.replaceChildren(
-      h('button.swatch', { type: 'button', role: 'radio', 'aria-checked': String(!colorId), title: 'Category color', style: { background: c ? c.color : '#999' }, onclick: () => { colorId = ''; paintSwatches(); } }),
+      h('button.swatch.cat-default', { type: 'button', role: 'radio', 'aria-checked': String(!colorId), title: 'Category color', style: { background: c ? c.color : '#999' }, onclick: () => { colorId = ''; paintSwatches(); } }),
       ...Object.entries(EVENT_COLORS).map(([id, [name, hex]]) =>
         h('button.swatch', { type: 'button', role: 'radio', 'aria-checked': String(colorId === id), title: name, style: { background: hex }, onclick: () => { colorId = id; paintSwatches(); } })));
   }

@@ -2,7 +2,7 @@
 // (a hidden file in your Google Drive) with per-item "newest wins" merging.
 import { store, uid, debounce } from './util.js';
 
-const COLLECTIONS = ['tasks', 'projects', 'habits', 'rewards', 'journal', 'logs'];
+const COLLECTIONS = ['tasks', 'projects', 'habits', 'rewards', 'journal', 'logs', 'pushq'];
 const TOMBSTONE_TTL = 60 * 86400000;
 
 export const DEFAULT_SETTINGS = {
@@ -13,7 +13,10 @@ export const DEFAULT_SETTINGS = {
   showCompleted: true,
   theme: 'system',       // system | light | dark
   reminderCalendarId: null,
-  calVisibility: {},     // calendar id -> shown? (falls back to Google's setting)
+  calVisibility: {},
+  taskReminders: 'google', // 'google' | 'ntfy'
+  notify: null,          // ntfy settings, see notify.js
+  timer: null,           // timer lengths, see timer.js     // calendar id -> shown? (falls back to Google's setting)
 };
 
 function empty() {

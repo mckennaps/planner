@@ -9,6 +9,11 @@ export class LocalBackend {
   constructor() {
     this.kind = 'demo';
     this.db = store.get(KEY) || seed();
+    if (!this.db.v2) { // sample habits for the demo (added in phase 2)
+      this.db.data = this.db.data || { version: 1, tasks: {} };
+      this.db.data.habits = { ...(this.db.data.habits || {}), ...sampleHabits() };
+      this.db.v2 = true;
+    }
     this.save();
   }
   save() { store.set(KEY, this.db); }
@@ -226,4 +231,23 @@ function seed() {
     calendars, events,
     data: { version: 1, tasks: Object.fromEntries(tasks.map((t) => [t.id, t])), settings: { updatedAt: 0 } },
   };
+}
+
+function sampleHabits() {
+  const now = Date.now();
+  const mk = (name, color, extra, pattern) => {
+    const log = {};
+    for (let i = 1; i <= 40; i++) {
+      const d = addDays(startOfDay(new Date()), -i);
+      if (pattern(i, d)) log[ymd(d)] = extra.goal || 1;
+    }
+    const id = uid();
+    return [id, { id, name, color, schedule: { type: 'daily' }, goal: 1, reminder: null, log, createdAt: now - 45 * 86400000, updatedAt: now, order: now, ...extra }];
+  };
+  return Object.fromEntries([
+    mk('Drink water', '#8fb6ff', { goal: 8 }, (i) => i % 6 !== 0),
+    mk('Read 20 pages', '#b48cff', {}, (i) => i < 9 || (i > 10 && i % 3 !== 0)),
+    mk('Gym', '#ff6fb8', { schedule: { type: 'days', days: [1, 3, 5] } }, (i, d) => [1, 3, 5].includes(d.getDay()) && i !== 12),
+    mk('Skincare', '#5ccfa8', {}, (i) => i % 4 !== 0),
+  ]);
 }

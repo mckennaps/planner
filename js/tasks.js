@@ -3,6 +3,7 @@ import { h, ymd, hm, todayStr, parseYmd, addDays, atTime, addMinutes, isoLocal, 
 import { openSheet, confirmDialog, toast, showError, icon } from './ui.js';
 import { repeatPicker, describe, nextDate } from './recurrence.js';
 import { evStart, cleanCopy } from './events.js';
+import { tasksViaNtfy } from './notify.js';
 
 export const PRIORITIES = [
   { v: 0, label: 'None' }, { v: 1, label: 'Low' }, { v: 2, label: 'Medium' }, { v: 3, label: 'High' },
@@ -25,7 +26,7 @@ export function newTask(app, extra = {}) {
 // ---------- reminders: a small event in a "Task reminders" calendar so Google notifies your phone ----------
 export async function syncTaskReminder(app, task) {
   const B = app.backend;
-  const want = task && !task.deleted && !task.done && task.due && task.dueTime && task.reminder != null;
+  const want = task && !task.deleted && !task.done && task.due && task.dueTime && task.reminder != null && !tasksViaNtfy(app);
   try {
     const calId = await app.reminderCalendar(!!want);
     if (!want) {

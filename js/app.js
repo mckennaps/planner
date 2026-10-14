@@ -1,11 +1,15 @@
 // App shell: sign-in, layout, calendar view, sidebar, categories, settings.
-import { h, $, store, ymd, hm, parseYmd, addDays, addMinutes, startOfDay, setClock24, isNarrow, isTouch, CATEGORY_SWATCHES, readableText, fmtDate } from './util.js';
+import { h, $, store, ymd, hm, parseYmd, addDays, addMinutes, startOfDay, setClock24, isNarrow, isTouch, CATEGORY_SWATCHES, readableText, fmtDate, debounce } from './util.js';
 import { openSheet, choose, confirmDialog, toast, showError, icon, anySheetOpen } from './ui.js';
 import { GoogleBackend, redirectUri } from './google.js';
 import { LocalBackend } from './local.js';
 import { DataStore } from './data.js';
 import { toFC, saveEvent, askScope, openEventEditor, loadForEdit, evStart } from './events.js';
 import { renderTaskList, openTaskEditor, newTask, tasksForRange, syncTaskReminder, toggleDone, createBlock, pickTask, openScheduler } from './tasks.js';
+import { renderTodayView } from './today.js';
+import { renderHabitsView, openHabitEditor } from './habits.js';
+import { initTimer, renderTimerView, onTimer, timerState, remainingMs, fmtClock, phaseLabel, isActive, setTask as setTimerTask, toggle as toggleTimer } from './timer.js';
+import { notifySettings, ntfyOn, newTopic, sendTest, syncQueue, syncQueueSoon } from './notify.js';
 
 const CONFIG = window.PLANNER_CONFIG || {};
 const VIEWS = [
@@ -69,11 +73,13 @@ async function start(backend) {
   let miniMonth = startOfDay(new Date());
   let fetchErrShown = false;
   let placing = null;
+  let viewCleanup = null;
+  const rerenderView = debounce(() => { if (['today', 'habits'].includes(app.ui.tab) && !anySheetOpen()) renderView(); }, 120);
   let tasksRerender = null;
   const app = {
     backend, data,
     calendars: [],
-    ui: { taskFilter: 'all', tab: 'calendar', taskPanel: store.get('planner.taskPanel', true) },
+    ui: { taskFilter: 'all', tab: store.get('planner.tab') || (isNarrow() ? 'today' : 'calendar'), taskPanel: store.get('planner.taskPanel', true) },
     get settings() { return data.settings; },
     calendar: (id) => app.calendars.find((c) => c.id === id) || null,
     isReminderCal: (id) => id && id === data.settings.reminderCalendarId,
@@ -140,10 +146,16 @@ async function start(backend) {
   app.cal = cal;
   app.renderTasks();
   initDraggable(app);
+  initTimer(app);
+  onTimer(paintTimerChip);
+  setTab(app.ui.tab);
+  setInterval(() => syncQueue(app), 30 * 60000);
 
   data.addEventListener('change', () => {
     app.renderTasks();
     refreshBlockStates();
+    rerenderView();
+    syncQueueSoon(app);
     applySettings(app);
     const src = cal.getEventSourceById('tasks');
     if (src) src.refetch();
@@ -152,7 +164,7 @@ async function start(backend) {
 
   const replayed = await backend.replayPending();
   if (replayed) app.refetch();
-  data.pull();
+  data.pull().then(() => syncQueue(app));
 
   // Pick up changes made on other devices when you come back to the app.
   let lastSync = Date.now();
@@ -183,6 +195,10 @@ async function start(backend) {
       h('aside#sidebar', { 'aria-label': 'Calendars and navigation' }),
       h('div.scrim', { onclick: () => toggleDrawer(false) }),
       h('main#main',
+        h('section.view#view-today'),
+        h('section.view#view-habits'),
+        h('section.view#view-timer'),
+        h('section.view#view-calendar',
         h('header#topbar',
           h('button.icon-btn.only-narrow', { type: 'button', 'aria-label': 'Open menu', onclick: () => toggleDrawer(true) }, icon('menu')),
           h('button.btn.ghost.today-btn', { type: 'button', onclick: () => cal.today() }, 'Today'),
@@ -200,26 +216,59 @@ async function start(backend) {
             setTimeout(() => cal.updateSize(), 220);
           } }, icon('list'))),
         h('div#placing', { hidden: true, role: 'status' }),
-        h('div#calendar-wrap', h('div#calendar'))),
+        h('div#calendar-wrap', h('div#calendar')))),
       h('aside#taskpanel', { 'aria-label': 'Tasks' }),
       h('nav#tabbar', { 'aria-label': 'Sections' },
-        tabBtn('calendar', 'cal', 'Calendar'), tabBtn('tasks', 'check', 'Tasks'),
-        h('button.tab', { type: 'button', onclick: () => toggleDrawer(true) }, icon('menu'), h('span', 'More'))),
-      h('button#fab', { type: 'button', 'aria-label': 'Create', onclick: fabCreate }, icon('plus', 26)));
+        tabBtn('today', 'home', 'Today'), tabBtn('calendar', 'cal', 'Calendar'), tabBtn('tasks', 'check', 'Tasks'),
+        tabBtn('habits', 'sparkle', 'Habits'), tabBtn('timer', 'timer', 'Focus')),
+      h('button#fab', { type: 'button', 'aria-label': 'Create', onclick: fabCreate }, icon('plus', 26)),
+      h('button#timer-chip', { type: 'button', hidden: true, onclick: () => setTab('timer') }));
     paintViewSwitch();
   }
   function tabBtn(id, ic, label) {
     return h('button.tab', { type: 'button', 'aria-current': String(app.ui.tab === id), dataset: { tab: id }, onclick: () => setTab(id) }, icon(ic), h('span', label));
   }
   function setTab(id) {
+    if (id === 'tasks' && !isNarrow()) id = 'calendar';
     app.ui.tab = id;
+    store.set('planner.tab', id);
     $('#app').dataset.tab = id;
     document.querySelectorAll('#tabbar .tab[data-tab]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === id)));
-    if (id === 'calendar') setTimeout(() => cal.updateSize(), 0);
+    document.querySelectorAll('.nav-item[data-tab]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === id)));
+    toggleDrawer(false);
+    renderView();
+    paintTimerChip();
+    if (id === 'calendar' && cal) setTimeout(() => cal.updateSize(), 0);
+  }
+  app.go = setTab;
+
+  // ---------------------------------------------------------------- non-calendar views
+  function renderView() {
+    if (viewCleanup) { viewCleanup(); viewCleanup = null; }
+    const id = app.ui.tab;
+    const onMenu = () => toggleDrawer(true);
+    if (id === 'today') viewCleanup = renderTodayView(app, $('#view-today'), { onMenu, go: setTab, openEvent: async (calId, gev) => openEventEditor(app, { calId, gev: await loadForEdit(app, calId, gev) }) });
+    else if (id === 'habits') renderHabitsView(app, $('#view-habits'), { onMenu });
+    else if (id === 'timer') viewCleanup = renderTimerView(app, $('#view-timer'), {
+      onMenu,
+      onPickTask: async () => { const t = await pickTask(app, { title: 'Focus on…' }); if (t) setTimerTask(t.id); },
+    });
+  }
+
+  function paintTimerChip() {
+    const chip = $('#timer-chip');
+    if (!chip) return;
+    const st = timerState();
+    const show = st && isActive() && app.ui.tab !== 'timer';
+    chip.hidden = !show;
+    if (!show) return;
+    chip.dataset.phase = st.phase;
+    chip.replaceChildren(icon(st.running ? 'timer' : 'pause', 16), h('span', `${phaseLabel(st.phase)} ${fmtClock(remainingMs())}`));
   }
   function toggleDrawer(open) { $('#app').classList.toggle('drawer-open', open); }
   async function fabCreate() {
     if (app.ui.tab === 'tasks') return openTaskEditor(app, newTask(app));
+    if (app.ui.tab === 'habits') return openHabitEditor(app, null);
     const which = await choose('Create', [{ value: 'event', label: 'Event' }, { value: 'task', label: 'Task' }], { confirmLabel: 'Next' });
     if (which === 'event') newEventAt(roundedNow());
     if (which === 'task') openTaskEditor(app, newTask(app));
@@ -253,6 +302,9 @@ async function start(backend) {
       h('div.sb-create',
         h('button.btn.primary', { type: 'button', onclick: () => { toggleDrawer(false); newEventAt(roundedNow()); } }, icon('plus', 18), 'Event'),
         h('button.btn.ghost', { type: 'button', onclick: () => { toggleDrawer(false); openTaskEditor(app, newTask(app)); } }, icon('plus', 18), 'Task')),
+      h('nav.side-nav', { 'aria-label': 'Sections' },
+        [['today', 'home', 'Today'], ['calendar', 'cal', 'Calendar'], ['habits', 'sparkle', 'Habits'], ['timer', 'timer', 'Focus timer']].map(([id, ic, label]) =>
+          h('button.nav-item', { type: 'button', dataset: { tab: id }, 'aria-current': String(app.ui.tab === id), onclick: () => setTab(id) }, icon(ic, 18), h('span', label)))),
       h('div#minical'),
       h('section.cats',
         h('div.cats-head', h('h2', 'Categories'),
@@ -307,7 +359,7 @@ async function start(backend) {
       const s = ymd(d);
       const inRange = range && !curMonth && s >= range[0] && s < range[1];
       days.push(h('button.mc-day' + (d.getMonth() !== first.getMonth() ? '.out' : '') + (s === today ? '.today' : '') + (inRange ? '.inrange' : ''),
-        { type: 'button', 'aria-label': fmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' }), onclick: () => { cal.gotoDate(d); if (isNarrow()) toggleDrawer(false); } },
+        { type: 'button', 'aria-label': fmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' }), onclick: () => { cal.gotoDate(d); setTab('calendar'); } },
         String(d.getDate())));
     }
     const dow = [];
@@ -418,8 +470,12 @@ async function start(backend) {
         toggle('set-showdone', S.showCompleted, 'Show completed tasks on the calendar', (v) => data.setSettings({ showCompleted: v }))),
       h('section.help',
         h('h3', 'Phone notifications'),
-        h('p', 'Notifications come from Google Calendar, so they work even when this app is closed. Install the Google Calendar app on your iPhone and iPad, sign in with the same account, and allow notifications.'),
-        h('p', `Event notifications use the times you set on each event. Task notifications go to a calendar called “${REMINDER_CAL_NAME}”, which appears once you add a notification to a task. Make sure it’s turned on in the Google Calendar app.`)),
+        ntfyOn(app)
+          ? h('p', 'Planner notifications are on (through the ntfy app): ',
+            [notifySettings(app).timer ? 'timer' : '', notifySettings(app).habits ? 'habit reminders' : '', data.settings.taskReminders === 'ntfy' ? 'task reminders' : ''].filter(Boolean).join(', ') || 'nothing selected', '.')
+          : h('p', 'Get timer, habit and task alerts from the Planner itself through the free ntfy app.'),
+        h('button.btn.ghost', { type: 'button', onclick: () => { s.close(); openNotifySetup(); } }, icon('bell', 18), ntfyOn(app) ? 'Notification settings' : 'Set up phone notifications'),
+        h('p', `Event notifications come from Google Calendar: install the Google Calendar app and allow notifications. ${data.settings.taskReminders === 'ntfy' ? '' : `Task notifications also go through Google, using a calendar called “${REMINDER_CAL_NAME}”.`}`)),
       h('section.help',
         h('h3', 'Account'),
         backend.kind === 'google'
@@ -440,6 +496,50 @@ async function start(backend) {
             ])));
     const s = openSheet({ title: 'Settings', body, footer: [h('span.grow'), h('button.btn.primary', { type: 'button', onclick: () => s.close() }, 'Done')] });
   }
+
+  // ---------------------------------------------------------------- phone notifications (ntfy)
+  function openNotifySetup() {
+    const n = notifySettings(app);
+    if (!n.topic) { n.topic = newTopic(); data.setSettings({ notify: { ...n } }); }
+    const topic = n.topic;
+    const copyBtn = h('button.btn.ghost.small', { type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(topic); toast('Copied'); } catch { codeEl.focus(); toast('Select the code and copy it'); }
+    } }, 'Copy');
+    const codeEl = h('code.copyable.topic-code', { tabindex: '0' }, topic);
+    const tog = (id, checked, label) => h('label.toggle', h('input', { id, type: 'checkbox', checked }), h('span', label));
+    const tTimer = tog('nt-timer', n.timer, 'Timer: break time and back-to-focus');
+    const tHabits = tog('nt-habits', n.habits, 'Habit reminders');
+    const tTasks = tog('nt-tasks', data.settings.taskReminders === 'ntfy', 'Task reminders (instead of Google Calendar)');
+    const enabled = h('input#nt-on', { type: 'checkbox', checked: n.enabled });
+    const body = h('div.stack',
+      h('ol.setup-steps',
+        h('li', h('strong', 'Get the ntfy app'), h('span', ' (free) from the App Store on your iPhone and iPad. Allow notifications when it asks.')),
+        h('li', h('strong', 'Subscribe to your private channel.'), h('span', ' In ntfy, tap +, paste this code as the topic, and keep the server as ntfy.sh:'),
+          h('div.row.topic-row', codeEl, copyBtn),
+          h('span.hint', 'The code works like a password, so don’t share it.')),
+        h('li', h('strong', 'Turn it on and send a test.'))),
+      h('label.toggle.big-toggle', enabled, h('span', 'Send notifications from the Planner')),
+      h('div.field', tTimer, tHabits, tTasks),
+      h('p.hint', 'ntfy can hold notifications up to 3 days ahead, so open the Planner at least every couple of days to keep reminders queued. Event reminders stay with Google Calendar.'));
+    const save = (close = true) => {
+      const notify = { ...notifySettings(app), enabled: enabled.checked, topic, timer: tTimer.querySelector('input').checked, habits: tHabits.querySelector('input').checked };
+      const before = data.settings.taskReminders;
+      const taskReminders = tTasks.querySelector('input').checked && enabled.checked ? 'ntfy' : 'google';
+      data.setSettings({ notify, taskReminders });
+      if (before !== taskReminders) for (const t of data.tasks) if (t.reminder != null && t.dueTime && !t.done) syncTaskReminder(app, t);
+      syncQueue(app);
+      if (close) s.close();
+    };
+    const s = openSheet({
+      title: 'Phone notifications', body, className: 'small',
+      footer: [
+        h('button.btn.ghost', { type: 'button', onclick: async () => { enabled.checked = true; save(false); await sendTest(app); } }, 'Send test'),
+        h('span.grow'),
+        h('button.btn.primary', { type: 'button', onclick: () => save() }, 'Save'),
+      ],
+    });
+  }
+  app.openNotifySetup = openNotifySetup;
 
   // ---------------------------------------------------------------- calendar
   function stopPlacing() {

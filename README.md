@@ -11,7 +11,13 @@ A personal calendar and task app that runs in your browser and installs on iPhon
 - Tasks with due dates and times, repeats, subtasks, priority, time estimates and notifications.
 - Time blocking: drag a task from the list onto the calendar, or use "Block time on calendar" in the task.
 
-Coming next: work timer with breaks, habit tracking, rewards, projects, journal. Completed tasks are already being logged so the rewards system can count them.
+- Today screen: what's next on your calendar, what's due, today's habits and the focus timer in one place.
+- Focus timer with breaks (Pomodoro-style): pick a task, and the time you spend is logged to it. Lengths are adjustable.
+- Habits: every day, certain days, or N times a week, with goals like "8 glasses", streaks and a heatmap.
+- Phone notifications from the Planner itself through the free ntfy app (timer, habit and task reminders).
+- Two styles: Blush, and Fairy princess (Settings → Style).
+
+Coming next: projects (board view, statuses, tags), rewards, journal and a weekly review. Completed tasks, habits and focus sessions are already logged so rewards can count them.
 
 ---
 
@@ -66,6 +72,15 @@ Notifications are sent by Google Calendar, so they arrive even when this app is 
 
 1. Install the **Google Calendar** app on your iPhone and iPad, sign in with the same account, and allow notifications.
 2. In the Google Calendar app's menu, make sure your categories are ticked. When you first give a task a notification, the app creates a calendar called **Task reminders**; make sure that one is ticked too.
+
+### 7. Planner notifications through ntfy (optional)
+
+1. Install **ntfy** (free) from the App Store on your iPhone/iPad and allow notifications.
+2. In the Planner, open **Settings → Set up phone notifications**. Copy your private code.
+3. In ntfy, tap **+**, paste the code as the topic (server: ntfy.sh), and subscribe.
+4. Back in the Planner, turn it on, choose what to get (timer, habits, tasks) and tap **Send test**.
+
+ntfy can hold notifications up to 3 days ahead, so open the Planner at least every couple of days to keep reminders queued. Event reminders still come from Google Calendar.
 
 ---
 
